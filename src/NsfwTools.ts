@@ -90,9 +90,10 @@ export class NsfwTools {
 				})
 			}
 
-		} catch (e) {
+		} catch (err: unknown) {
 
 			/* catch all sorts of bad data */
+			const e = err as Error
 
 			if (
 				e.message === 'Expected image (BMP, JPEG, PNG, or GIF), but got unsupported image type'
