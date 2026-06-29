@@ -7,7 +7,7 @@
  * hentai - hentai and pornographic drawings
  * porn - pornographic images, sexual acts
  * 
- * Supported formats: BMP, JPEG, PNG, or GIF (gif uses different api function)
+ * Supported formats: BMP, JPEG, PNG
  */
 
 import { FilterPluginInterface } from "shepherd-plugin-interfaces";

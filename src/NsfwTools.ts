@@ -54,96 +54,15 @@ export class NsfwTools {
 		return predictions
 	}
 
-	static checkGif = async (gif: Buffer, txid: string): Promise<FilterResult | FilterErrorResult> => {
-
-		const result: FilterResult = {
-			flagged: false,
-		}
-
-		try {
-
-			const model = await NsfwTools.loadModel()
-			const framePredictions = await model.classifyGif(gif, {
-				topk: 1,
-				fps: 1,
-			})
-
-			for (const frame of framePredictions) {
-				const class1 = frame[0].className
-				const prob1 = frame[0].probability
-				result.top_score_name = class1
-				result.top_score_value = prob1
-
-				if (['Hentai', 'Porn', 'Sexy'].includes(class1) && prob1 >= 0.9) {
-					logger(prefix, `${class1} gif detected`, txid)
-					result.flagged = true
-					break;
-				}
-			}
-
-			if (process.env.NODE_ENV === 'test' && !result.flagged) {
-				logger(prefix, 'gif clean', txid)
-			}
-
-			if (['Neutral', 'Drawing'].includes(result.top_score_name)) {
-				result.top_score_name = undefined
-				result.top_score_value = undefined
-			}
-
-
-			if (result.top_score_name === 'Porn' && NsfwTools.FALSE_POSITIVE_PORN_SCORES.has(result.top_score_value)) {
-				result.flagged = false
-				result.top_score_name = undefined
-				result.top_score_value = undefined
-				logger(prefix, 'false positive porn score detected', txid)
-			}
-
-
-			return result;
-
-		} catch (e) {
-
-			/* handle all the bad data */
-
-			if (
-				e.message
-				&& (
-					e.message === 'Invalid GIF 87a/89a header.'
-					|| e.message.startsWith('Unknown gif block:')
-					|| e.message.startsWith('Invalid typed array length:')
-					|| e.message === 'Invalid block size'
-					|| e.message === 'Frame index out of range.'
-				)
-			) {
-				// still not guaranteed to be corrupt, browser may be able to open these
-				logger(prefix, `gif. probable corrupt data found (${e.message})`, txid)
-				return {
-					flagged: undefined,
-					data_reason: 'corrupt-maybe',
-					err_message: e.message,
-				}
-			}
-
-			else {
-				logger(prefix, 'UNHANDLED error processing gif', txid + ' ', e.name, ':', e.message)
-				logger(prefix, await si.mem())
-				throw e
-			}
-		}
-	}
-
 	static checkImage = async (pic: Buffer, contentType: string, txid: string): Promise<FilterResult | FilterErrorResult> => {
 
 		// Currently we only support these types:
-		if (!["image/bmp", "image/jpeg", "image/png", "image/gif"].includes(contentType)) {
+		if (!["image/bmp", "image/jpeg", "image/png"].includes(contentType)) {
 			return {
 				flagged: undefined,
 				data_reason: 'unsupported',
 			}
 		}
-
-		// Separate handling for GIFs
-		if (contentType === 'image/gif') return NsfwTools.checkGif(pic, txid)
 
 		try {
 
@@ -151,6 +70,12 @@ export class NsfwTools {
 
 			const topName = predictions[0].className
 			const topValue = predictions[0].probability
+
+			if (topName === 'Porn' && NsfwTools.FALSE_POSITIVE_PORN_SCORES.has(topValue)) {
+				logger(prefix, 'false positive porn score detected', txid)
+				return { flagged: false }
+			}
+
 			const flagged = (['Sexy', 'Porn', 'Hentai'].includes(topName)) && topValue >= 0.9
 
 			if (flagged) {
