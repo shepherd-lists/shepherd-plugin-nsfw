@@ -28,17 +28,17 @@
   "devDependencies": {
     "@types/chai": "^5.2.3",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^18.16.1",
+    "@types/node": "^24.13.2",
     "chai": "^6.2.2",
     "mocha": "^11.7.6",
     "tsx": "^4.22.4",
-    "typescript": "^5.0.4"
+    "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@tensorflow/tfjs-node": "^3.21.1",
+    "@tensorflow/tfjs-node": "^4.22.0",
     "ansi-colors": "^4.1.1",
-    "nsfwjs": "^2.4.2",
-    "shepherd-plugin-interfaces": "^0.3.0",
+    "nsfwjs": "^4.3.0",
+    "shepherd-plugin-interfaces": "^5.0.0",
     "systeminformation": "^5.21.8"
   }
 }
