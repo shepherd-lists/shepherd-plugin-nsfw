@@ -29,7 +29,7 @@ describe('NsfwTools tests', ()=>{
 			expect(res.flagged).false
 		}else{
 			console.log('test system, ran out of memory')
-			expect((<FilterErrorResult>res).data_reason).eq('oversized')
+			expect((res as FilterErrorResult).data_reason).eq('oversized')
 		}
 	}).timeout(0)
 

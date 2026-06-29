@@ -7,8 +7,8 @@
   "scripts": {
     "build": "npx -y rimraf build && tsc && npx -y shx cp -R ./src/model ./build/model",
     "postversion": "git push && git push --tags && npm run build && npm publish",
-    "test:grep": "mocha -r ts-node/register **/*.spec.ts --grep",
-    "test": "npm run build && mocha -r ts-node/register **/*.spec.ts"
+    "test:grep": "mocha -r tsx/cjs **/*.spec.ts --grep",
+    "test": "npm run build && mocha -r tsx/cjs **/*.spec.ts"
   },
   "repository": {
     "type": "git",
@@ -26,14 +26,12 @@
   },
   "homepage": "https://github.com/shepherd-media-classifier/shepherd-plugin-nsfw#readme",
   "devDependencies": {
-    "@types/chai": "^4.3.0",
-    "@types/mocha": "^10.0.0",
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^18.16.1",
-    "@types/sinon": "^10.0.10",
-    "chai": "^4.3.6",
-    "mocha": "^10.1.0",
-    "sinon": "^15.0.1",
-    "ts-node": "^10.2.1",
+    "chai": "^6.2.2",
+    "mocha": "^11.7.6",
+    "tsx": "^4.22.4",
     "typescript": "^5.0.4"
   },
   "dependencies": {
