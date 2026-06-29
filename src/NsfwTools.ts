@@ -1,3 +1,4 @@
+import './polyfills' // must precede the tfjs-node import; see polyfills.ts
 import * as tf from '@tensorflow/tfjs-node'
 import * as nsfw from 'nsfwjs'
 import { logger } from './utils/logger'
