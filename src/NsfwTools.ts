@@ -1,5 +1,7 @@
+import './polyfills' // must precede the tfjs-node import; see polyfills.ts
 import * as tf from '@tensorflow/tfjs-node'
 import * as nsfw from 'nsfwjs'
+import sharp from 'sharp'
 import { logger } from './utils/logger'
 import { FilterErrorResult, FilterResult } from 'shepherd-plugin-interfaces'
 import si from 'systeminformation'
@@ -10,6 +12,10 @@ const prefix = 'nsfwjs-plugin'
 
 // do this for all envs
 tf.enableProdMode()
+
+// content types tfjs-node can decode natively (via tf.node.decodeImage).
+// anything else is routed through sharp and decoded to raw RGB pixels.
+const TFJS_NATIVE = new Set(['image/bmp', 'image/jpeg', 'image/png'])
 
 export class NsfwTools {
 	private static _isLoading = false
@@ -42,11 +48,13 @@ export class NsfwTools {
 		return NsfwTools._model
 	}
 
-	static checkSingleImage = async (pic: Buffer) => {
+	static checkSingleImage = async (pic: Buffer, contentType: string) => {
 
 		const model = await NsfwTools.loadModel()
 
-		const image = tf.node.decodeImage(pic as Uint8Array, 3) as tf.Tensor3D
+		const image = TFJS_NATIVE.has(contentType)
+			? tf.node.decodeImage(pic as Uint8Array, 3) as tf.Tensor3D
+			: await NsfwTools.decodeWithSharp(pic)
 
 		const predictions = await model.classify(image)
 		image.dispose() // explicit TensorFlow memory management
@@ -54,103 +62,40 @@ export class NsfwTools {
 		return predictions
 	}
 
-	static checkGif = async (gif: Buffer, txid: string): Promise<FilterResult | FilterErrorResult> => {
+	/**
+	 * Decode any sharp-supported format (WebP, AVIF, TIFF, SVG, HEIC, GIF, ...)
+	 * into a 3-channel RGB Tensor3D. First frame only for animated inputs.
+	 * Throws sharp's own error if the buffer cannot be decoded.
+	 */
+	static decodeWithSharp = async (pic: Buffer): Promise<tf.Tensor3D> => {
+		const { data, info } = await sharp(pic, { animated: false })
+			.rotate()                 // honour EXIF orientation
+			.toColourspace('srgb')    // grayscale/CMYK/etc. -> 3-channel RGB(+A)
+			.removeAlpha()            // drop alpha -> exactly 3 channels
+			.raw()
+			.toBuffer({ resolveWithObject: true })
 
-		const result: FilterResult = {
-			flagged: false,
-		}
-
-		try {
-
-			const model = await NsfwTools.loadModel()
-			const framePredictions = await model.classifyGif(gif, {
-				topk: 1,
-				fps: 1,
-			})
-
-			for (const frame of framePredictions) {
-				const class1 = frame[0].className
-				const prob1 = frame[0].probability
-				result.top_score_name = class1
-				result.top_score_value = prob1
-
-				if (['Hentai', 'Porn', 'Sexy'].includes(class1) && prob1 >= 0.9) {
-					logger(prefix, `${class1} gif detected`, txid)
-					result.flagged = true
-					break;
-				}
-			}
-
-			if (process.env.NODE_ENV === 'test' && !result.flagged) {
-				logger(prefix, 'gif clean', txid)
-			}
-
-			if (['Neutral', 'Drawing'].includes(result.top_score_name)) {
-				result.top_score_name = undefined
-				result.top_score_value = undefined
-			}
-
-
-			if (result.top_score_name === 'Porn' && NsfwTools.FALSE_POSITIVE_PORN_SCORES.has(result.top_score_value)) {
-				result.flagged = false
-				result.top_score_name = undefined
-				result.top_score_value = undefined
-				logger(prefix, 'false positive porn score detected', txid)
-			}
-
-
-			return result;
-
-		} catch (e) {
-
-			/* handle all the bad data */
-
-			if (
-				e.message
-				&& (
-					e.message === 'Invalid GIF 87a/89a header.'
-					|| e.message.startsWith('Unknown gif block:')
-					|| e.message.startsWith('Invalid typed array length:')
-					|| e.message === 'Invalid block size'
-					|| e.message === 'Frame index out of range.'
-				)
-			) {
-				// still not guaranteed to be corrupt, browser may be able to open these
-				logger(prefix, `gif. probable corrupt data found (${e.message})`, txid)
-				return {
-					flagged: undefined,
-					data_reason: 'corrupt-maybe',
-					err_message: e.message,
-				}
-			}
-
-			else {
-				logger(prefix, 'UNHANDLED error processing gif', txid + ' ', e.name, ':', e.message)
-				logger(prefix, await si.mem())
-				throw e
-			}
-		}
+		return tf.tensor3d(
+			new Uint8Array(data),
+			[info.height, info.width, 3],
+			'int32',
+		)
 	}
 
 	static checkImage = async (pic: Buffer, contentType: string, txid: string): Promise<FilterResult | FilterErrorResult> => {
 
-		// Currently we only support these types:
-		if (!["image/bmp", "image/jpeg", "image/png", "image/gif"].includes(contentType)) {
-			return {
-				flagged: undefined,
-				data_reason: 'unsupported',
-			}
-		}
-
-		// Separate handling for GIFs
-		if (contentType === 'image/gif') return NsfwTools.checkGif(pic, txid)
-
 		try {
 
-			const predictions = await NsfwTools.checkSingleImage(pic)
+			const predictions = await NsfwTools.checkSingleImage(pic, contentType)
 
 			const topName = predictions[0].className
 			const topValue = predictions[0].probability
+
+			if (topName === 'Porn' && NsfwTools.FALSE_POSITIVE_PORN_SCORES.has(topValue)) {
+				logger(prefix, 'false positive porn score detected', txid)
+				return { flagged: false }
+			}
+
 			const flagged = (['Sexy', 'Porn', 'Hentai'].includes(topName)) && topValue >= 0.9
 
 			if (flagged) {
@@ -165,11 +110,25 @@ export class NsfwTools {
 				})
 			}
 
-		} catch (e) {
+		} catch (err: unknown) {
 
 			/* catch all sorts of bad data */
+			const e = err as Error
 
 			if (
+				/* sharp could not decode the buffer (format libvips wasn't built
+				   with, or data sharp considers undecodable) */
+				!TFJS_NATIVE.has(contentType)
+				&& /unsupported image format|corrupt header|Input buffer contains|premature end|VipsForeignLoad/i.test(e.message)
+			) {
+				logger(prefix, 'sharp could not decode image', contentType, txid)
+				return {
+					flagged: undefined,
+					data_reason: 'unsupported',
+				}
+			}
+
+			else if (
 				e.message === 'Expected image (BMP, JPEG, PNG, or GIF), but got unsupported image type'
 				&& (['image/bmp', 'image/jpeg', 'image/png'].includes(contentType)) //sanity, should already be checked
 			) {
@@ -182,8 +141,11 @@ export class NsfwTools {
 
 			else if (e.message.startsWith('Invalid TF_Status: 3')) {
 
-				/* Handle these errors depending on error reason given. */
-				const reason: string = e.message.split('\n')[1]
+				/* Handle these errors depending on error reason given.
+				   The native binding formats these as "Invalid TF_Status: 3\nMessage: ...".
+				   Default to '' if that second line is ever missing so the matches below
+				   fall through to the UNHANDLED branch instead of throwing a TypeError. */
+				const reason: string = e.message.split('\n')[1] ?? ''
 
 				if (
 					reason.startsWith('Message: Invalid PNG data, size')
