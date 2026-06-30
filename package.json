@@ -38,6 +38,7 @@
     "@tensorflow/tfjs-node": "^4.22.0",
     "ansi-colors": "^4.1.1",
     "nsfwjs": "^4.3.0",
+    "sharp": "^0.35.2",
     "shepherd-plugin-interfaces": "^5.0.0",
     "systeminformation": "^5.21.8"
   }
