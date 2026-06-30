@@ -141,8 +141,11 @@ export class NsfwTools {
 
 			else if (e.message.startsWith('Invalid TF_Status: 3')) {
 
-				/* Handle these errors depending on error reason given. */
-				const reason: string = e.message.split('\n')[1]
+				/* Handle these errors depending on error reason given.
+				   The native binding formats these as "Invalid TF_Status: 3\nMessage: ...".
+				   Default to '' if that second line is ever missing so the matches below
+				   fall through to the UNHANDLED branch instead of throwing a TypeError. */
+				const reason: string = e.message.split('\n')[1] ?? ''
 
 				if (
 					reason.startsWith('Message: Invalid PNG data, size')
