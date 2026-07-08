@@ -39,7 +39,7 @@
     "ansi-colors": "^4.1.1",
     "nsfwjs": "^4.3.0",
     "sharp": "^0.35.2",
-    "shepherd-plugin-interfaces": "^5.0.0",
+    "shepherd-plugin-interfaces": "^5.1.0",
     "systeminformation": "^5.21.8"
   }
 }
