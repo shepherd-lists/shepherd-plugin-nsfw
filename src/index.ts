@@ -18,6 +18,7 @@ import { NsfwTools } from "./NsfwTools";
 const NsfwjsPlugin: FilterPluginInterface = {
 	init: NsfwTools.init,
 	checkImage: NsfwTools.checkImage,
+	checkImageDir: NsfwTools.checkImageDir,
 }
 
 export default NsfwjsPlugin;
