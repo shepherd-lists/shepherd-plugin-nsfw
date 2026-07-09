@@ -35,7 +35,11 @@ const NSFW_BATCH_SIZE = (() => {
 // How long the batcher waits for more images before flushing a partial batch.
 // One predict costs hundreds of ms, so this is negligible; it only bounds
 // latency for the trickle case (a lone image / a video's last partial batch).
-const BATCH_WAIT_MS = 100 //ms
+// Set per-host via env.
+const NSFW_BATCH_WAIT_MS = (() => {
+	const n = Number(process.env.NSFW_BATCH_WAIT_MS)
+	return Number.isFinite(n) && n > 0 ? Math.floor(n) : 100
+})()
 
 // one image's top prediction, mirroring nsfwjs predictions[0]
 type TopPrediction = { className: string; probability: number }
@@ -71,7 +75,7 @@ export class NsfwTools {
 		}
 		this._isLoading = true
 		logger(prefix, 'loading model once')
-		logger(prefix, `batching config NSFW_BATCH_SIZE=${NSFW_BATCH_SIZE} BATCH_WAIT_MS=${BATCH_WAIT_MS}`)
+		logger(prefix, `batching config NSFW_BATCH_SIZE=${NSFW_BATCH_SIZE} BATCH_WAIT_MS=${NSFW_BATCH_WAIT_MS}`)
 		// model folder is here also: LN6kloFszCgXvubWNvbRHpp4DCnCLnXQakz8SplJZFQ
 		NsfwTools._model = await nsfw.load(`file://${__dirname}/model/`, { size: 299 })
 		this._isLoading = false
@@ -105,7 +109,7 @@ export class NsfwTools {
 			if (NsfwTools._queue.length >= NSFW_BATCH_SIZE) {
 				NsfwTools.flushQueue()
 			} else if (!NsfwTools._flushTimer) {
-				NsfwTools._flushTimer = setTimeout(NsfwTools.flushQueue, BATCH_WAIT_MS)
+				NsfwTools._flushTimer = setTimeout(NsfwTools.flushQueue, NSFW_BATCH_WAIT_MS)
 			}
 		})
 
@@ -121,7 +125,7 @@ export class NsfwTools {
 		logger(prefix, `flush batch=${batch.length} remaining=${NsfwTools._queue.length}`)
 		// more than one batch's worth is waiting -> keep draining after this one
 		if (NsfwTools._queue.length > 0 && !NsfwTools._flushTimer) {
-			NsfwTools._flushTimer = setTimeout(NsfwTools.flushQueue, BATCH_WAIT_MS)
+			NsfwTools._flushTimer = setTimeout(NsfwTools.flushQueue, NSFW_BATCH_WAIT_MS)
 		}
 
 		try {
