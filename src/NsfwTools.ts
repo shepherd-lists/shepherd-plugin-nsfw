@@ -10,7 +10,7 @@ import si from 'systeminformation'
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
-const prefix = 'nsfwjs-plugin'
+const prefix = 'nsfw-plugin'
 
 // do this for all envs
 tf.enableProdMode()
@@ -71,6 +71,7 @@ export class NsfwTools {
 		}
 		this._isLoading = true
 		logger(prefix, 'loading model once')
+		logger(prefix, `batching config NSFW_BATCH_SIZE=${NSFW_BATCH_SIZE} BATCH_WAIT_MS=${BATCH_WAIT_MS}`)
 		// model folder is here also: LN6kloFszCgXvubWNvbRHpp4DCnCLnXQakz8SplJZFQ
 		NsfwTools._model = await nsfw.load(`file://${__dirname}/model/`, { size: 299 })
 		this._isLoading = false
@@ -117,6 +118,7 @@ export class NsfwTools {
 		if (NsfwTools._queue.length === 0) return //not certain how this could occur
 
 		const batch = NsfwTools._queue.splice(0, NSFW_BATCH_SIZE)
+		logger(prefix, `flush batch=${batch.length} remaining=${NsfwTools._queue.length}`)
 		// more than one batch's worth is waiting -> keep draining after this one
 		if (NsfwTools._queue.length > 0 && !NsfwTools._flushTimer) {
 			NsfwTools._flushTimer = setTimeout(NsfwTools.flushQueue, BATCH_WAIT_MS)
