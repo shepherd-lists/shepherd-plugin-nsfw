@@ -332,10 +332,12 @@ export class NsfwTools {
 
 	/**
 	 * Classify a folder of extracted video/gif keyframes (`frame-<n>.png`, produced
-	 * by us, so always decodable PNG). Every frame is submitted to the shared batcher
-	 * and classified across the whole process alongside any concurrent checkImage /
-	 * checkImageDir calls. Frames are read in numeric order; the FIRST flagged frame
-	 * wins, else not-flagged. Throws if the folder contains no frames.
+	 * by us, so always decodable PNG). Frames are read in numeric order and classified
+	 * in SEQUENTIAL batches of up to NSFW_BATCH_SIZE: at most one batch of frames is
+	 * ever read+decoded at a time, so a very long video never loads all its frames
+	 * into memory at once. The FIRST flagged frame wins - a flag short-circuits the
+	 * rest of the video (no further reads/decodes/predicts). Else not-flagged. Throws
+	 * if the folder contains no frames.
 	 */
 	static checkImageDir = async (framesDir: string, _mimetype: string, txid: string): Promise<FilterResult | FilterErrorResult> => {
 
@@ -349,17 +351,21 @@ export class NsfwTools {
 			throw new Error(`checkImageDir: no frame-*.png files in ${framesDir} [${txid}]`)
 		}
 
-		// submit every frame to the shared batcher; results come back in frame order
-		const results = await Promise.all(frames.map(async name => {
-			const pic = await fs.readFile(path.join(framesDir, name))
-			const decoded = tf.node.decodeImage(pic as Uint8Array, 3) as tf.Tensor3D
-			return NsfwTools.classifyBatched(NsfwTools.preprocess(decoded))
-		}))
+		for (let i = 0; i < frames.length; i += NSFW_BATCH_SIZE) {
+			const chunk = frames.slice(i, i + NSFW_BATCH_SIZE) // Math.min(remaining, NSFW_BATCH_SIZE)
 
-		// first flagged frame wins (frame order preserved by Promise.all)
-		for (const top of results) {
-			const res = NsfwTools.topPredictionToResult(top.className, top.probability, txid)
-			if (res.flagged) return res
+			// read + decode + classify only this chunk; batcher disposes each tensor
+			const results = await Promise.all(chunk.map(async name => {
+				const pic = await fs.readFile(path.join(framesDir, name))
+				const decoded = tf.node.decodeImage(pic as Uint8Array, 3) as tf.Tensor3D
+				return NsfwTools.classifyBatched(NsfwTools.preprocess(decoded))
+			}))
+
+			// first flagged frame wins (frame order preserved by Promise.all)
+			for (const top of results) {
+				const res = NsfwTools.topPredictionToResult(top.className, top.probability, txid)
+				if (res.flagged) return res
+			}
 		}
 
 		return { flagged: false }
