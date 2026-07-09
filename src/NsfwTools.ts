@@ -123,10 +123,9 @@ export class NsfwTools {
 		}
 
 		try {
-			const model = await NsfwTools.loadModel()
 			// nsfwjs stores the underlying tf model at .model; predict() takes any
 			// batch dim (nsfwjs.classify() cannot - it hardcodes reshape([1,...])).
-			const net = (model as unknown as { model: tf.LayersModel }).model
+			const net = (NsfwTools._model as unknown as { model: tf.LayersModel }).model
 
 			// [n,size,size,3] top predictions, computed in one forward pass.
 			const rows = tf.tidy(() => {
@@ -188,8 +187,6 @@ export class NsfwTools {
 		})
 
 	static checkSingleImage = async (pic: Buffer, contentType: string): Promise<TopPrediction> => {
-
-		await NsfwTools.loadModel()
 
 		const decoded = TFJS_NATIVE.has(contentType)
 			? tf.node.decodeImage(pic as Uint8Array, 3) as tf.Tensor3D
@@ -340,8 +337,6 @@ export class NsfwTools {
 	 * if the folder contains no frames.
 	 */
 	static checkImageDir = async (framesDir: string, _mimetype: string, txid: string): Promise<FilterResult | FilterErrorResult> => {
-
-		await NsfwTools.loadModel()
 
 		const frames = (await fs.readdir(framesDir))
 			.filter(name => /^frame-\d+\.png$/.test(name))
