@@ -352,21 +352,31 @@ export class NsfwTools {
 			throw new Error(`checkImageDir: no frame-*.png files in ${framesDir} [${txid}]`)
 		}
 
-		for (let i = 0; i < frames.length; i += NSFW_BATCH_SIZE) {
-			const chunk = frames.slice(i, i + NSFW_BATCH_SIZE) // Math.min(remaining, NSFW_BATCH_SIZE)
-
-			// read + decode + classify only this chunk; batcher disposes each tensor
-			const results = await Promise.all(chunk.map(async name => {
-				const pic = await fs.readFile(path.join(framesDir, name))
+		// Read AHEAD of the frame we're checking so the shared batcher stays full and
+		// flushes on size (a clean NSFW_BATCH_SIZE) rather than on the wait timer with a
+		// ragged partial. Keep at most `lookahead` decoded/submitted frames in flight, so
+		// a long video still never loads all its frames at once (bounded memory). Frames
+		// are submitted in order and their result promises checked in order, so the FIRST
+		// flagged frame (lowest index) still wins and short-circuits the rest.
+		const lookahead = NSFW_BATCH_SIZE * 2
+		const submit = (name: string): Promise<TopPrediction> =>
+			fs.readFile(path.join(framesDir, name)).then(pic => {
 				const decoded = tf.node.decodeImage(pic as Uint8Array, 3) as tf.Tensor3D
-				return NsfwTools.classifyBatched(NsfwTools.preprocess(decoded))
-			}))
+				return NsfwTools.classifyBatched(NsfwTools.preprocess(decoded)) // batcher disposes the tensor
+			})
 
-			// first flagged frame wins (frame order preserved by Promise.all)
-			for (const top of results) {
-				const res = NsfwTools.topPredictionToResult(top.className, top.probability, txid)
-				if (res.flagged) return res
-			}
+		// Sliding window of at most `lookahead` in-flight result promises (FIFO). Prime it,
+		// then for each frame: await the oldest (front) in submission order, check it, and
+		// top the window back up with the next frame. O(lookahead) promises held at once.
+		const inflight: Promise<TopPrediction>[] = []
+		let next = 0
+		while (next < frames.length && inflight.length < lookahead) inflight.push(submit(frames[next++]))
+
+		while (inflight.length > 0) {
+			const top = await inflight.shift()!
+			const res = NsfwTools.topPredictionToResult(top.className, top.probability, txid)
+			if (res.flagged) return res // first flagged frame wins; stop reading the rest
+			if (next < frames.length) inflight.push(submit(frames[next++]))
 		}
 
 		return { flagged: false }
