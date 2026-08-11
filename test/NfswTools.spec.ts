@@ -34,10 +34,11 @@ describe('NsfwTools tests', ()=>{
 		}
 	}).timeout(0)
 
-	describe('sharp-decoded formats', () => {
+	describe('ffmpeg-decoded formats', () => {
 
-		/* sharp re-encodes the known-safe jpeg asset into each format, so we can
-		   assert these formerly-"unsupported" types now actually get classified. */
+		/* sharp is a devDependency now - a fixture generator only. It re-encodes the
+		   known-safe jpeg asset into each format so we can assert these non-native
+		   types still get classified through the ffmpeg path. */
 		const formats: { name: string; contentType: string; encode: (s: Sharp) => Sharp }[] = [
 			{ name: 'webp', contentType: 'image/webp', encode: s => s.webp() },
 			{ name: 'tiff', contentType: 'image/tiff', encode: s => s.tiff() },
@@ -65,13 +66,43 @@ describe('NsfwTools tests', ()=>{
 			expect((res as FilterErrorResult).data_reason).eq('unsupported')
 		}).timeout(0)
 
+		/* Accepted coverage loss, pinned here so it is a deliberate decision rather
+		   than a surprise: ffmpeg has an svg_pipe demuxer but no SVG rasteriser, in
+		   any version, so svg cannot be classified and routes onward instead. */
+		it("returns 'unsupported' for svg", async () => {
+			const svg = Buffer.from(
+				'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">'
+				+ '<rect width="64" height="64" fill="#888"/></svg>',
+				'utf8',
+			)
+			const res = await NsfwFilter.checkImage(svg, 'image/svg+xml', 'fake-svg-txid')
+
+			expect(res.flagged).undefined
+			expect((res as FilterErrorResult).data_reason).eq('unsupported')
+		}).timeout(0)
+
 	})
 
-	/* webp no longer goes through sharp - it is transcoded to png by an ffmpeg
-	   subprocess so the decode is isolated and time-bounded. The 'classifies webp'
-	   case above is the happy-path regression test; these cover the two failure
-	   branches. */
-	describe('webp ffmpeg transcode path', () => {
+	describe('runtime dependencies', () => {
+
+		/* The decoder libraries must not be reachable from the deployed image at all -
+		   an in-process decode that cannot be abandoned is the failure this design
+		   exists to avoid. sharp belongs in devDependencies (fixture generation);
+		   a dependency's devDependencies are never installed, which is what keeps it
+		   out of the runtime. Guard against it being moved back by a later edit. */
+		it('does not ship sharp as a runtime dependency', () => {
+			const pkg = require('../package.json')
+
+			expect(pkg.dependencies).to.not.have.property('sharp')
+			expect(pkg.devDependencies).to.have.property('sharp')
+		})
+
+	})
+
+	/* Non-native formats are transcoded to png by an ffmpeg subprocess so the decode
+	   is isolated and time-bounded. The format cases above are the happy path; these
+	   cover the two failure branches. */
+	describe('transcode failure handling', () => {
 
 		it("returns 'unsupported' when ffmpeg rejects the buffer", async () => {
 			// valid RIFF/WEBP header, truncated body -> ffmpeg exits non-zero
