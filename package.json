@@ -31,6 +31,7 @@
     "@types/node": "^24.13.2",
     "chai": "^6.2.2",
     "mocha": "^11.7.6",
+    "sharp": "^0.35.2",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
   },
@@ -38,7 +39,6 @@
     "@tensorflow/tfjs-node": "^4.22.0",
     "ansi-colors": "^4.1.1",
     "nsfwjs": "^4.3.0",
-    "sharp": "^0.35.2",
     "shepherd-plugin-interfaces": "^5.1.0",
     "systeminformation": "^5.21.8"
   }
