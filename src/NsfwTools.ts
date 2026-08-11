@@ -1,13 +1,12 @@
 import './polyfills' // must precede the tfjs-node import; see polyfills.ts
 import * as tf from '@tensorflow/tfjs-node'
 import * as nsfw from 'nsfwjs'
-import sharp from 'sharp'
 import fs from 'fs/promises'
 import path from 'path'
 import { logger } from './utils/logger'
 import { FilterErrorResult, FilterResult } from 'shepherd-plugin-interfaces'
 import si from 'systeminformation'
-import { TranscodeError, TranscodeTimeoutError, transcodeWebpToPng } from './transcode'
+import { TranscodeError, TranscodeTimeoutError, transcodeToPng } from './transcode'
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -17,8 +16,8 @@ const prefix = 'nsfw-plugin'
 tf.enableProdMode()
 
 // content types tfjs-node can decode natively (via tf.node.decodeImage).
-// webp is transcoded to png out-of-process by ffmpeg first (see transcode.ts);
-// anything else is routed through sharp and decoded to raw RGB pixels.
+// anything else is transcoded to png out-of-process by ffmpeg first, then
+// decoded by tfjs the same way (see transcode.ts).
 const TFJS_NATIVE = new Set(['image/bmp', 'image/jpeg', 'image/png'])
 
 // nsfwjs class order (matches nsfwjs's NSFW_CLASSES map, index 0..4)
@@ -198,37 +197,12 @@ export class NsfwTools {
 
 		const decoded = TFJS_NATIVE.has(contentType)
 			? tf.node.decodeImage(pic as Uint8Array, 3) as tf.Tensor3D
-			// webp is transcoded out-of-process so a long decode cannot hold a shared
-			// libuv threadpool slot indefinitely. See transcode.ts.
-			: contentType === 'image/webp'
-				? tf.node.decodeImage(await transcodeWebpToPng(pic) as Uint8Array, 3) as tf.Tensor3D
-				: await NsfwTools.decodeWithSharp(pic)
+			// everything else is transcoded out-of-process, so a decode that runs long
+			// cannot hold a shared libuv threadpool slot indefinitely. See transcode.ts.
+			: tf.node.decodeImage(await transcodeToPng(pic, contentType) as Uint8Array, 3) as tf.Tensor3D
 
 		// batcher disposes the submitted (preprocessed) tensor after predict
 		return NsfwTools.classifyBatched(NsfwTools.preprocess(decoded))
-	}
-
-	/**
-	 * Decode any sharp-supported format (AVIF, TIFF, SVG, HEIC, GIF, ...) into a
-	 * 3-channel RGB Tensor3D. First frame only for animated inputs. Throws sharp's
-	 * own error if the buffer cannot be decoded.
-	 *
-	 * NOT used for webp - that goes via ffmpeg (transcode.ts) so the decode runs
-	 * out-of-process rather than on the shared libuv threadpool.
-	 */
-	static decodeWithSharp = async (pic: Buffer): Promise<tf.Tensor3D> => {
-		const { data, info } = await sharp(pic, { animated: false })
-			.rotate()                 // honour EXIF orientation
-			.toColourspace('srgb')    // grayscale/CMYK/etc. -> 3-channel RGB(+A)
-			.removeAlpha()            // drop alpha -> exactly 3 channels
-			.raw()
-			.toBuffer({ resolveWithObject: true })
-
-		return tf.tensor3d(
-			new Uint8Array(data),
-			[info.height, info.width, 3],
-			'int32',
-		)
 	}
 
 	static checkImage = async (pic: Buffer, contentType: string, txid: string): Promise<FilterResult | FilterErrorResult> => {
@@ -249,7 +223,7 @@ export class NsfwTools {
 					 an ordinary decode failure so these stay visible. 'unsupported' is
 					 terminal for nsfw (routes to the next classifier), so it is not
 					 retried. */
-				logger(prefix, 'webp transcode timed out', contentType, txid)
+				logger(prefix, 'transcode timed out', contentType, txid)
 				return {
 					flagged: undefined,
 					data_reason: 'unsupported',
@@ -259,19 +233,6 @@ export class NsfwTools {
 			else if (err instanceof TranscodeError) {
 				/* ffmpeg ran and rejected the buffer */
 				logger(prefix, 'ffmpeg could not decode image', contentType, txid, e.message)
-				return {
-					flagged: undefined,
-					data_reason: 'unsupported',
-				}
-			}
-
-			else if (
-				/* sharp could not decode the buffer (format libvips wasn't built
-					 with, or data sharp considers undecodable) */
-				!TFJS_NATIVE.has(contentType)
-				&& /unsupported image format|corrupt header|Input buffer contains|premature end|VipsForeignLoad/i.test(e.message)
-			) {
-				logger(prefix, 'sharp could not decode image', contentType, txid)
 				return {
 					flagged: undefined,
 					data_reason: 'unsupported',

@@ -71,7 +71,7 @@ const release = () => {
 }
 
 /*
- * `-frames:v 1` reproduces sharp's `{ animated: false }` first-frame behaviour.
+ * `-frames:v 1` takes the first frame only, for animated inputs.
  * The scale cap bounds worst-case output size - nsfwjs resizes to 299x299
  * anyway, so accuracy is unaffected. `-pix_fmt rgb24` forces 8-bit 3-channel
  * output, so alpha removal is deterministic and tf.node.decodeImage always gets
@@ -106,7 +106,8 @@ const runFfmpeg = (args: string[]) => new Promise<void>((resolve, reject) => {
 
 	/* spawn failures (ENOENT - no ffmpeg binary) reject with the raw error on
 	   purpose: an operational fault must stay loud, not be mapped to
-	   'unsupported' and silently reclassify every webp as undecodable. */
+	   'unsupported' and silently reclassify every non-native image as
+	   undecodable. */
 	child.on('error', err => {
 		clearTimeout(timer)
 		reject(err)
@@ -122,7 +123,19 @@ const runFfmpeg = (args: string[]) => new Promise<void>((resolve, reject) => {
 })
 
 /**
- * Decode a webp buffer to PNG bytes via an ffmpeg subprocess.
+ * Name the input temp file after the content type, e.g. 'image/webp' -> 'in.webp'.
+ * ffmpeg content-probes regardless, but an extension helps it pick a demuxer for
+ * the container-based formats. Anything unrecognisable gets no extension rather
+ * than a sanitised guess - `contentType` is untrusted, so it never reaches a path.
+ */
+const inputName = (contentType: string) => {
+	const subtype = contentType.split('/')[1]?.toLowerCase() ?? ''
+	return /^[a-z0-9]+$/.test(subtype) ? `in.${subtype}` : 'in'
+}
+
+/**
+ * Decode an image buffer to PNG bytes via an ffmpeg subprocess. This is the only
+ * decode path for every format tfjs-node cannot read natively.
  *
  * Isolation is the point. In-process decoding runs on the libuv threadpool,
  * which is small (4 slots by default) and shared - a decode that runs long
@@ -130,15 +143,16 @@ const runFfmpeg = (args: string[]) => new Promise<void>((resolve, reject) => {
  * it. A subprocess is independently killable and bounded by a timeout, so the
  * cost of one bad input stays with that one input.
  *
- * Data moves via temp files in both directions - never stdin/stdout, where
- * writing input while ffmpeg blocks writing output is a classic deadlock.
+ * Data moves via temp files in both directions, never stdin/stdout: writing
+ * input while ffmpeg blocks writing output is a classic deadlock, and the
+ * box-based formats (avif, heic) need to seek, which a pipe cannot do.
  */
-export const transcodeWebpToPng = async (pic: Buffer): Promise<Buffer> => {
+export const transcodeToPng = async (pic: Buffer, contentType: string): Promise<Buffer> => {
 	await acquire()
 	try {
-		const dir = await mkdtemp(path.join(os.tmpdir(), 'nsfw-webp-'))
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'nsfw-decode-'))
 		try {
-			const input = path.join(dir, 'in.webp')
+			const input = path.join(dir, inputName(contentType))
 			const output = path.join(dir, 'out.png')
 			await writeFile(input, pic)
 			await runFfmpeg(ffmpegArgs(input, output))

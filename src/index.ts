@@ -7,10 +7,11 @@
  * hentai - hentai and pornographic drawings
  * porn - pornographic images, sexual acts
  * 
- * Supported formats: BMP/JPEG/PNG are decoded natively by tfjs-node; WebP is
- * transcoded to PNG by an ffmpeg subprocess (see transcode.ts); any other image
- * type (AVIF, TIFF, SVG, HEIC, ...) is decoded via sharp. Undecodable input
- * returns data_reason: 'unsupported'.
+ * Supported formats: BMP/JPEG/PNG are decoded natively by tfjs-node. Every other
+ * image type is transcoded to PNG by an ffmpeg subprocess first (see
+ * transcode.ts), so coverage follows whatever the ffmpeg build supports - note
+ * ffmpeg has no SVG rasteriser, so SVG is not classified. Input ffmpeg cannot
+ * decode returns data_reason: 'unsupported'.
  */
 
 import { FilterPluginInterface } from "shepherd-plugin-interfaces";
