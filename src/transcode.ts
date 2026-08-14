@@ -72,11 +72,11 @@ const release = () => {
 
 /*
  * `-frames:v 1` takes the first frame only, for animated inputs.
- * The scale cap bounds worst-case output size - nsfwjs resizes to 299x299
- * anyway, so accuracy is unaffected. `-pix_fmt rgb24` forces 8-bit 3-channel
- * output, so alpha removal is deterministic and tf.node.decodeImage always gets
- * something it can read. The `\,` escapes are for ffmpeg's filtergraph parser
- * (which splits on commas), not for a shell - there is no shell here.
+ * Scale to 299 (= NsfwTools IMAGE_SIZE, keep in step): preprocess() squashes to that
+ * anyway, so same geometry for a fraction of the pixels, and preprocess() then skips
+ * its resize. Stored, unfiltered PNG - deflate earns nothing at this size.
+ * `-pix_fmt rgb24` forces 8-bit 3-channel output, so alpha removal is deterministic
+ * and tf.node.decodeImage always gets something it can read.
  */
 const ffmpegArgs = (input: string, output: string) => [
 	'-nostdin',
@@ -84,10 +84,12 @@ const ffmpegArgs = (input: string, output: string) => [
 	'-loglevel', 'error',
 	'-i', input,
 	'-frames:v', '1',
-	'-vf', 'scale=w=min(iw\\,4096):h=min(ih\\,4096):force_original_aspect_ratio=decrease',
+	'-vf', 'scale=299:299',
 	'-pix_fmt', 'rgb24',
 	'-f', 'image2',
 	'-c:v', 'png',
+	'-compression_level', '0',
+	'-pred', 'none',
 	'-y', output,
 ]
 
