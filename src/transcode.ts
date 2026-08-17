@@ -150,19 +150,25 @@ const inputName = (contentType: string) => {
  * box-based formats (avif, heic) need to seek, which a pipe cannot do.
  */
 export const transcodeToPng = async (pic: Buffer, contentType: string): Promise<Buffer> => {
+	const queued = Date.now()
 	await acquire()
+	const acquired = Date.now()
+	let ffmpegMs = 0
 	try {
 		const dir = await mkdtemp(path.join(os.tmpdir(), 'nsfw-decode-'))
 		try {
 			const input = path.join(dir, inputName(contentType))
 			const output = path.join(dir, 'out.png')
 			await writeFile(input, pic)
+			const ran = Date.now()
 			await runFfmpeg(ffmpegArgs(input, output))
+			ffmpegMs = Date.now() - ran
 			return await readFile(output)
 		} finally {
 			await rm(dir, { recursive: true, force: true })
 		}
 	} finally {
+		logger(prefix, `transcode wait=${acquired - queued}ms ffmpeg=${ffmpegMs}ms slot=${Date.now() - acquired}ms waiting=${waiting.length}`)
 		release()
 	}
 }
